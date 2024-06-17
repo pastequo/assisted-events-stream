@@ -7,6 +7,7 @@ import (
 	"github.com/google/uuid"
 	"github.com/openshift-assisted/assisted-events-streams/internal/types"
 	"github.com/openshift-assisted/assisted-events-streams/pkg/jsonedit"
+	"github.com/openshift/assisted-service/pkg/uploader/models"
 	"github.com/sirupsen/logrus"
 )
 
@@ -115,15 +116,52 @@ func (e *EventEnricher) GetBaseEnrichedEvent(event *types.Event, cluster map[str
 
 	enrichedEvent.ID = uuid.NewSHA1(namespace, []byte(enrichedEvent.Message+enrichedEvent.EventTime)).String()
 
-	enrichedEvent.Versions = e.getVersionsFromMetadata(event.Metadata, enrichedEvent.Name)
+	eventMetadata := e.getEventMetadata(event.Metadata, enrichedEvent.Name)
+	if eventMetadata != nil && eventMetadata.DeploymentType != "" {
+		enrichedEvent.DeploymentType = &eventMetadata.DeploymentType
+	}
+
+	enrichedEvent.Versions = e.getVersionsFromMetadata(event.Metadata, eventMetadata, enrichedEvent.Name)
 	enrichedEvent.ReleaseTag = e.getReleaseTagFromMetadata(event.Metadata, enrichedEvent.Name)
 
 	enrichedEvent.Cluster = cluster
 	enrichedEvent.InfraEnvs = infraEnvs
+
 	return enrichedEvent, err
 }
 
-func (e *EventEnricher) getVersionsFromMetadata(metadata map[string]interface{}, eventName string) map[string]interface{} {
+func (e *EventEnricher) getEventMetadata(metadata map[string]interface{}, eventName string) *models.Metadata {
+	eventMetadata, ok := metadata["eventmetadata"]
+	if !ok {
+		return nil
+	}
+
+	ret, ok := eventMetadata.(models.Metadata)
+	if !ok {
+		e.logger.Warnf("eventmetadata type in %s is not models.Metadata", eventName)
+		return nil
+	}
+
+	return &ret
+}
+
+func (e *EventEnricher) getVersionsFromMetadata(metadata map[string]interface{}, eventMetadata *models.Metadata, eventName string) map[string]interface{} {
+	ret := e.extractVersionFromMetadata(metadata, eventName)
+	if ret == nil {
+		return nil
+	}
+
+	if eventMetadata == nil {
+		return ret
+	}
+
+	ret["git_ref"] = eventMetadata.GitRef
+	ret["deployment_version"] = eventMetadata.DeploymentVersion
+
+	return ret
+}
+
+func (e *EventEnricher) extractVersionFromMetadata(metadata map[string]interface{}, eventName string) map[string]interface{} {
 	var (
 		versionsMapInterface interface{}
 		versionsMap          map[string]interface{}
@@ -135,21 +173,17 @@ func (e *EventEnricher) getVersionsFromMetadata(metadata map[string]interface{},
 		e.logger.Debugf("No versions found in event %s", eventName)
 		return nil
 	}
-
 	if versionsMap, ok = versionsMapInterface.(map[string]interface{}); !ok {
 		e.logger.Debugf("The found versions in %s are not a valid map", eventName)
 		return nil
 	}
-
 	if versionsInterface, ok = versionsMap["versions"]; !ok {
 		return versionsMap
 	}
-
 	if innerVersionsMap, ok = versionsInterface.(map[string]interface{}); !ok {
 		e.logger.Debugf("The found versions in %s are not a valid map", eventName)
 		return versionsMap
 	}
-
 	return innerVersionsMap
 }
 
@@ -169,7 +203,6 @@ func (e *EventEnricher) getReleaseTagFromMetadata(metadata map[string]interface{
 		e.logger.Debugf("The found versions in %s are not a valid map", eventName)
 		return nil
 	}
-
 	if releaseTagInterface, ok = versionsMap["release_tag"]; !ok {
 		e.logger.Debugf("No release tag found in %s", eventName)
 		return nil
@@ -178,7 +211,6 @@ func (e *EventEnricher) getReleaseTagFromMetadata(metadata map[string]interface{
 		e.logger.Debugf("The release tag found in %s is not a valid string", eventName)
 		return nil
 	}
-
 	return &releaseTag
 }
 

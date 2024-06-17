@@ -3,15 +3,17 @@ package onprem
 import (
 	"archive/tar"
 	"compress/gzip"
+	"context"
 	"encoding/json"
 	"fmt"
 	"io"
-	"io/ioutil"
 	"os"
 	"path/filepath"
 
 	"github.com/kelseyhightower/envconfig"
 	"github.com/openshift-assisted/assisted-events-streams/internal/types"
+	"github.com/openshift/assisted-service/pkg/uploader"
+	"github.com/openshift/assisted-service/pkg/uploader/models"
 	"github.com/sirupsen/logrus"
 )
 
@@ -66,7 +68,7 @@ func (e *EventExtractor) ExtractEvents(tarFilename string) (chan types.EventEnve
 	e.untarFile(logger, tarFilename, tmpdir)
 
 	logger.Info("extracting events from files in directory")
-	e.extractEvents(logger, tmpdir, eventChannel)
+	e.extractEvents(logger, tmpdir, tarFilename, eventChannel)
 	return eventChannel, nil
 }
 
@@ -139,7 +141,7 @@ func (e *EventExtractor) readTarLine(logger *logrus.Entry, tarReader *tar.Reader
 }
 
 // extract events from given target tmpdir (where extracted files would be)
-func (e *EventExtractor) extractEvents(logger *logrus.Entry, tmpdir string, eventChannel chan types.EventEnvelope) {
+func (e *EventExtractor) extractEvents(logger *logrus.Entry, tmpdir string, filename string, eventChannel chan types.EventEnvelope) {
 	eventTypesMatches := []EventTypeMatch{
 		{
 			glob:         "/*/events/cluster.json",
@@ -167,8 +169,14 @@ func (e *EventExtractor) extractEvents(logger *logrus.Entry, tmpdir string, even
 	if err != nil {
 		logger.WithError(err).Warning("error extracting versions")
 	}
+
+	metadata, err := extractMetadataEvents(filename)
+	if err != nil {
+		logger.WithError(err).Warning("error extracting metadata")
+	}
+
 	for _, eventTypeMatch := range eventTypesMatches {
-		e.extractEventsForEventType(logger, eventTypeMatch, tmpdir, versions, eventChannel)
+		e.extractEventsForEventType(logger, eventTypeMatch, tmpdir, metadata, versions, eventChannel)
 	}
 	close(eventChannel)
 }
@@ -195,7 +203,21 @@ func getVersionsFromFile(tmpdir string, filename string) (map[string]string, err
 	return versions, nil
 }
 
-func (e *EventExtractor) extractEventsForEventType(logger *logrus.Entry, eventTypeMatch EventTypeMatch, tmpdir string, versions map[string]string, eventChannel chan types.EventEnvelope) {
+func extractMetadataEvents(filename string) ([]models.Events, error) {
+	file, err := os.Open(filename)
+	if err != nil {
+		return nil, fmt.Errorf("failed to open file: %w", err)
+	}
+
+	ret, err := uploader.ExtractEvents(context.TODO(), file)
+	if err != nil {
+		return nil, fmt.Errorf("failed to extract metadata events: %w", err)
+	}
+
+	return ret, nil
+}
+
+func (e *EventExtractor) extractEventsForEventType(logger *logrus.Entry, eventTypeMatch EventTypeMatch, tmpdir string, metadata []models.Events, versions map[string]string, eventChannel chan types.EventEnvelope) {
 	files, err := filepath.Glob(fmt.Sprintf("%s%s", tmpdir, eventTypeMatch.glob))
 	if err != nil {
 		logger.WithError(err).Error("error globbing files")
@@ -213,12 +235,22 @@ func (e *EventExtractor) extractEventsForEventType(logger *logrus.Entry, eventTy
 				"jsonFile": jFile,
 			}).Error("Error getting resources from json file")
 		}
-		e.transformResourcesToEvents(logger, eventTypeMatch, resources, versions, eventChannel)
+		e.transformResourcesToEvents(logger, eventTypeMatch, resources, metadata, versions, eventChannel)
 	}
 }
 
-func getMetadata(eventName string, versions map[string]string) map[string]interface{} {
-	return map[string]interface{}{
+func findEventMetadata(clusterID string, events []models.Events) *models.Metadata {
+	for _, event := range events {
+		if event.ClusterID == clusterID {
+			return event.Metadata
+		}
+	}
+
+	return nil
+}
+
+func getMetadata(clusterID string, events []models.Events, versions map[string]string) map[string]interface{} {
+	ret := map[string]interface{}{
 		"versions": map[string]interface{}{
 			// nested value, as here would go other version related metadata
 			// such as `release_tag`. See getVersionsFromMetadata method in
@@ -226,9 +258,16 @@ func getMetadata(eventName string, versions map[string]string) map[string]interf
 			"versions": versions,
 		},
 	}
+
+	eventMetadata := findEventMetadata(clusterID, events)
+	if eventMetadata != nil {
+		ret["eventmetadata"] = *eventMetadata
+	}
+
+	return ret
 }
 
-func (e *EventExtractor) transformResourcesToEvents(logger *logrus.Entry, eventTypeMatch EventTypeMatch, resources []map[string]interface{}, versions map[string]string, eventChannel chan types.EventEnvelope) {
+func (e *EventExtractor) transformResourcesToEvents(logger *logrus.Entry, eventTypeMatch EventTypeMatch, resources []map[string]interface{}, metadata []models.Events, versions map[string]string, eventChannel chan types.EventEnvelope) {
 	for _, resource := range resources {
 		clusterID, ok := resource[eventTypeMatch.clusterIDKey]
 		if !ok {
@@ -238,6 +277,12 @@ func (e *EventExtractor) transformResourcesToEvents(logger *logrus.Entry, eventT
 			}).Warning("could not extract cluster_id from resource")
 			return
 		}
+		cID, ok := clusterID.(string)
+		if !ok {
+			logger.Warning("cluster_id not a string")
+			return
+		}
+
 		if eventTypeMatch.eventName == "ClusterState" {
 			resource["onprem"] = true
 			// delete hosts, as message could be too big
@@ -247,7 +292,7 @@ func (e *EventExtractor) transformResourcesToEvents(logger *logrus.Entry, eventT
 		event := types.Event{
 			Name:     eventTypeMatch.eventName,
 			Payload:  resource,
-			Metadata: getMetadata(eventTypeMatch.eventName, versions),
+			Metadata: getMetadata(cID, metadata, versions),
 		}
 		logger = logger.WithFields(logrus.Fields{
 			"cluster_id":     clusterID,
@@ -255,21 +300,15 @@ func (e *EventExtractor) transformResourcesToEvents(logger *logrus.Entry, eventT
 			"event_type":     event.Name,
 		})
 		logger.Info("generating event for cluster")
-		cID, ok := clusterID.(string)
-		if !ok {
-			logger.Warning("cluster_id not a string")
-			return
-		}
-
 		logger.WithFields(logrus.Fields{
 			"event": event,
 		}).Debug("generated event")
+
 		eventChannel <- types.EventEnvelope{
 			Key:   []byte(cID),
 			Event: event,
 		}
 	}
-
 }
 
 func (e *EventExtractor) getResourcesFromFile(logger *logrus.Entry, filename string) ([]map[string]interface{}, error) {
@@ -282,7 +321,7 @@ func (e *EventExtractor) getResourcesFromFile(logger *logrus.Entry, filename str
 		return []map[string]interface{}{}, err
 	}
 	defer jsonFile.Close()
-	byteValue, _ := ioutil.ReadAll(jsonFile)
+	byteValue, _ := io.ReadAll(jsonFile)
 	err = json.Unmarshal(byteValue, &resources)
 	if err != nil {
 		logger.WithError(err).Warning("Error decoding json file for resource list, trying resource")
