@@ -27,6 +27,9 @@ spec:
     value: Dockerfile
   - name: path-context
     value: .
+  - build-args:
+    value:
+    - version='{{revision}}'
   pipelineSpec:
     finally:
     - name: show-sbom
