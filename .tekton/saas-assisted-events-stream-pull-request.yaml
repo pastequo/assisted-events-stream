@@ -30,7 +30,7 @@ spec:
     value: Dockerfile
   - name: path-context
     value: .
-  - build-args:
+  - name: build-args
     value:
     - version={{revision}}
   pipelineSpec:
