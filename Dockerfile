@@ -22,6 +22,7 @@ RUN ${HOME}/go/bin/go-licenses save --save_path /tmp/licenses ./...
 FROM registry.access.redhat.com/ubi9/ubi-minimal:9.2
 
 ARG version=latest
+ARG release=main
 
 LABEL com.redhat.component assisted-events-stream
 LABEL description "Pipeline processors for assisted installer service events"
@@ -29,7 +30,7 @@ LABEL summary "Pipeline processors for assisted installer service events"
 LABEL io.k8s.description "Pipeline rocessors for assisted installer service events"
 LABEL distribution-scope public
 LABEL name assisted-events-stream
-LABEL release ${version}
+LABEL release ${release}
 LABEL version ${version}
 LABEL url https://github.com/openshift-assisted/assisted-events-stream
 LABEL vendor "Red Hat, Inc."

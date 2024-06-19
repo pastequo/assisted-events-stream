@@ -30,6 +30,7 @@ spec:
   - name: build-args
     value:
     - version={{revision}}
+    - release={{target_branch}}
   pipelineSpec:
     finally:
     - name: show-sbom
