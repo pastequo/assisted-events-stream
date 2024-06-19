@@ -32,7 +32,7 @@ func main() {
 		for sig := range intChannel {
 			log.WithFields(logrus.Fields{
 				"signal": sig,
-			}).Info("captured signal, shutting down")
+			}).Info("Captured signal, shutting down")
 			reader.Close(ctx)
 			projection.Close(ctx)
 		}
