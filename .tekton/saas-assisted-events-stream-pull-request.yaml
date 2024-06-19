@@ -32,7 +32,7 @@ spec:
     value: .
   - build-args:
     value:
-    - version='{{revision}}'
+    - version={{revision}}
   pipelineSpec:
     finally:
     - name: show-sbom
