@@ -64,6 +64,27 @@ spec:
       workspaces:
       - name: workspace
         workspace: workspace
+    - name: slack-webhook-notification
+      params:
+      - name: message
+        value: Image $(params.output-image) is available
+      - name: secret-name
+        value: slack-webhook
+      - name: key-name
+        value: my-channel
+      taskRef:
+        params:
+        - name: bundle
+          value: quay.io/redhat-appstudio-tekton-catalog/task-slack-webhook-notification:0.1
+        - name: name
+          value: slack-webhook-notification
+        - name: kind
+          value: Task
+        resolver: bundles
+      when:
+      - input: $(tasks.status)
+        operator: in
+        values: ["Succeeded"]
     params:
     - description: Source Repository URL
       name: git-url
