@@ -19,7 +19,7 @@
 # RUN ${HOME}/go/bin/go-licenses save --save_path /tmp/licenses ./...
 
 ## Runtime
-FROM registry.access.redhat.com/ubi9/ubi-minimal:9.2
+FROM registry.access.redhat.com/ubi9/ubi-minimal:9.4-1134
 
 ARG version=latest
 ARG release=main
