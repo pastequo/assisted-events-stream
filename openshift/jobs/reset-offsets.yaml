@@ -1,0 +1,105 @@
+apiVersion: template.openshift.io/v1
+kind: Template
+metadata:
+  name: reset-kafka-offsets
+objects:
+- apiVersion: v1
+  kind: ConfigMap
+  metadata:
+    name: reset-kafka-offsets
+  data:
+    reset_offsets.sh: |
+      #!/bin/bash
+
+      echo "sasl.mechanism=SCRAM-SHA-512
+      security.protocol=SASL_SSL
+      sasl.jaas.config=org.apache.kafka.common.security.scram.ScramLoginModule required \\
+          username=\"${ADMIN_USERNAME}\" \\
+          password=\"${ADMIN_PASSWORD}\";" > /tmp/admin-scram.properties
+
+      /opt/kafka/bin/kafka-consumer-groups.sh --reset-offsets --group ${KAFKA_GROUP_ID} --topic ${KAFKA_TOPIC} --by-duration ${DURATION} --command-config /tmp/admin-scram.properties --bootstrap-server ${BOOTSTRAP_SERVERS} --execute
+- apiVersion: batch/v1
+  kind: Job
+  metadata:
+    name: reset-kafka-offsets
+  spec:
+    template:
+      spec:
+        containers:
+        - command:
+          - bash
+          - c
+          - /tmp/scripts/reset_offsets.sh
+          env:
+          - name: ADMIN_USERNAME
+            valueFrom:
+              secretKeyRef:
+                key: ${ADMIN_USERNAME_SECRET_KEY}
+                name: ${ADMIN_USERNAME_SECRET_NAME}
+          - name: ADMIN_PASSWORD
+            valueFrom:
+              secretKeyRef:
+                key: ${ADMIN_PASSWORD_SECRET_KEY}
+                name: ${ADMIN_PASSWORD_SECRET_NAME}
+          - name: KAFKA_GROUP_ID
+            value: ${KAFKA_GROUP_ID}
+          - name: KAFKA_TOPIC
+            value: ${KAFKA_TOPIC}
+          - name: DURATION
+            value: ${DURATION}
+          - name: BOOTSTRAP_SERVERS
+            valueFrom:
+              secretKeyRef:
+                key: ${BOOTSTRAP_SERVERS_SECRET_KEY}
+                name: ${BOOTSTRAP_SERVERS_SECRET_NAME}
+          image: ${IMAGE_NAME}:${IMAGE_TAG}
+          imagePullPolicy: ${IMAGE_PULL_POLICY}
+          name: reset-offsets
+          resources:
+            limits:
+              cpu: ${CPU_LIMIT}
+              memory: ${MEMORY_LIMIT}
+            requests:
+              cpu: ${CPU_REQUEST}
+              memory: ${MEMORY_REQUEST}
+          volumeMounts:
+          - mountPath: /tmp/scripts
+            name: scripts
+        volumes:
+        - configMap:
+            name: reset-kafka-offsets
+            defaultMode: 493
+          name: scripts
+parameters:
+- name: IMAGE_NAME
+  value: quay.io/strimzi/kafka
+- name: IMAGE_TAG
+  value: latest-kafka-3.8.0
+- name: IMAGE_PULL_POLICY
+  value: Always
+- name: CPU_LIMIT
+  value: "1"
+- name: CPU_REQUEST
+  value: 10m
+- name: MEMORY_LIMIT
+  value: 512Mi
+- name: MEMORY_REQUEST
+  value: 256Mi
+- name: KAFKA_GROUP_ID
+  value: enriched-event-projection
+- name: KAFKA_TOPIC
+  value: events-stream-integration
+- name: DURATION
+  value: P2M
+- name: BOOTSTRAP_SERVERS_SECRET_KEY
+  value: bootstrap_brokers
+- name: BOOTSTRAP_SERVERS_SECRET_NAME
+  value: kafka
+- name: ADMIN_USERNAME_SECRET_KEY
+  value: username
+- name: ADMIN_USERNAME_SECRET_NAME
+  value: kafka-admin-user
+- name: ADMIN_PASSWORD_SECRET_KEY
+  value: password
+- name: ADMIN_PASSWORD_SECRET_NAME
+  value: kafka-admin-user
