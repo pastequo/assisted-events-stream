@@ -45,8 +45,7 @@ var _ = Describe("Setting objects", func() {
 	When("setting empty value", func() {
 		It("should set it", func() {
 			var event *types.Event
-			mock.Regexp().ExpectHSet("clusters", "c42cfc1d-411a-4cdb-953b-a8e0f3f82375", regexp.QuoteMeta("[]")).SetVal(1)
-			mock.Regexp().ExpectExpire("cluster", defaultDuration).SetVal(true)
+			mock.Regexp().ExpectSet("clusters_c42cfc1d-411a-4cdb-953b-a8e0f3f82375", regexp.QuoteMeta("[]"), defaultDuration).SetVal("1")
 
 			err := snapshotRepo.SetCluster(
 				ctx,
@@ -67,8 +66,7 @@ var _ = Describe("Setting objects", func() {
 			eventBytes, _ := json.Marshal(event.Payload)
 			cmp := fmt.Sprintf("%v", eventBytes)
 
-			mock.Regexp().ExpectHSet("clusters", "c42cfc1d-411a-4cdb-953b-a8e0f3f82375", regexp.QuoteMeta(cmp)).SetVal(1)
-			mock.Regexp().ExpectExpire("clusters", defaultDuration).SetVal(true)
+			mock.Regexp().ExpectSet("clusters_c42cfc1d-411a-4cdb-953b-a8e0f3f82375", regexp.QuoteMeta(cmp), defaultDuration).SetVal("1")
 
 			err := snapshotRepo.SetCluster(
 				ctx,
@@ -90,7 +88,7 @@ var _ = Describe("Setting objects", func() {
 			cmp := fmt.Sprintf("%v", eventBytes)
 
 			expectedError := errors.New("FAIL")
-			mock.Regexp().ExpectHSet("clusters", "c42cfc1d-411a-4cdb-953b-a8e0f3f82375", regexp.QuoteMeta(cmp)).SetErr(expectedError)
+			mock.Regexp().ExpectSet("clusters_c42cfc1d-411a-4cdb-953b-a8e0f3f82375", regexp.QuoteMeta(cmp), defaultDuration).SetErr(expectedError)
 
 			err := snapshotRepo.SetCluster(
 				ctx,

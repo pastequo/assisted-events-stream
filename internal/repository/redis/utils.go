@@ -2,33 +2,71 @@ package redis
 
 import (
 	"context"
+	"errors"
 	"fmt"
 	"os"
 	"time"
 
 	"github.com/go-redis/redis/v8"
+	"github.com/openshift-assisted/assisted-events-streams/internal/migrations/lock"
 	"github.com/sirupsen/logrus"
 )
 
-const defaultExpirationStr = "720h" // 30 days
+const (
+	defaultExpirationStr = "720h" // 30 days
 
-func NewRedisClientFromEnv(ctx context.Context, logger *logrus.Logger) *redis.Client {
+	ProcessingClientName = "assisted-events-stream"
+	MigrationsClientName = "migrations"
+)
+
+func NewRedisClientFromEnv(ctx context.Context, logger *logrus.Logger, clientName string) (*redis.Client, error) {
 	addr := os.Getenv("VALKEY_ADDRESS")
+	password := os.Getenv("VALKEY_PASSWORD")
+
+	return NewRedisClient(ctx, logger, clientName, addr, password)
+}
+
+func NewRedisClient(ctx context.Context, logger *logrus.Logger, clientName string, addr string, password string) (*redis.Client, error) {
 	client := redis.NewClient(&redis.Options{
-		Addr:     addr,
-		Password: os.Getenv("VALKEY_PASSWORD"),
-		DB:       0,
+		Addr:         addr,
+		Password:     password,
+		MinIdleConns: 1, // Needed to ensure at least one connection is up, which helps the migration command to ensure no processing is running simultaneously
+		DB:           0,
+		OnConnect: func(ctx context.Context, cn *redis.Conn) error {
+			logger.Debugf("setting client name to %s", clientName)
+
+			err := cn.ClientSetName(ctx, clientName).Err()
+			if err != nil {
+				logger.WithError(err).Error("failed to set client name")
+
+				return err
+			}
+
+			return nil
+		},
 	})
+
 	if err := client.Ping(ctx).Err(); err != nil {
-		logger.WithFields(logrus.Fields{
-			"addr": addr,
-		}).WithError(err).Fatal("could not ping redis compatible server")
+		return nil, fmt.Errorf("could not ping redis compatible server: %w", err)
 	}
-	return client
+
+	return client, nil
 }
 
 func NewSnapshotRepositoryFromEnv(ctx context.Context, logger *logrus.Logger) (*SnapshotRepository, error) {
-	redis := NewRedisClientFromEnv(ctx, logger)
+	redis, err := NewRedisClientFromEnv(ctx, logger, ProcessingClientName)
+	if err != nil {
+		return nil, fmt.Errorf("failed to create redis client: %w", err)
+	}
+
+	isMigrationRunning, err := lock.IsMigrationRunning(ctx, redis)
+	if err != nil {
+		return nil, fmt.Errorf("failed to check if migration is running: %w", err)
+	}
+
+	if isMigrationRunning {
+		return nil, errors.New("migration is running")
+	}
 
 	expirationStr := os.Getenv("VALKEY_EXPIRATION")
 	if expirationStr == "" {

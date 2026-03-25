@@ -1,0 +1,90 @@
+apiVersion: template.openshift.io/v1
+kind: Template
+metadata:
+  name: run-valkey-migrations
+objects:
+- apiVersion: v1
+  kind: ConfigMap
+  metadata:
+    name: migration-config
+  data:
+    config.yaml: |
+      processing:
+        deleteNoTTL:
+          enabled: ${DELETE_NO_TTL_ENABLED}
+          batchSize: ${DELETE_NO_TTL_BATCH_SIZE}
+        splitClusters:
+          enabled: ${SPLIT_CLUSTERS_ENABLED}
+          batchSize: ${SPLIT_CLUSTERS_BATCH_SIZE}
+          expiration: ${SPLIT_CLUSTERS_EXPIRATION}
+- apiVersion: batch/v1
+  kind: Job
+  metadata:
+    name: run-valkey-migrations
+  spec:
+    template:
+      spec:
+        restartPolicy: ${RESTART_POLICY}
+        containers:
+        - command:
+          - /migrations
+          env:
+          - name: VALKEY_ADDRESS
+            value: valkey:6379
+          - name: VALKEY_PASSWORD
+            valueFrom:
+              secretKeyRef:
+                key: password
+                name: ${VALKEY_CREDENTIALS_SECRETNAME}
+          - name: MIGRATIONS_CONFIG_PATH
+            value: /etc/migrations/config.yaml
+          image: ${IMAGE_NAME}:${IMAGE_TAG}
+          imagePullPolicy: ${IMAGE_PULL_POLICY}
+          name: run-valkey-migrations
+          resources:
+            limits:
+              cpu: ${CPU_LIMIT}
+              memory: ${MEMORY_LIMIT}
+            requests:
+              cpu: ${CPU_REQUEST}
+              memory: ${MEMORY_REQUEST}
+          volumeMounts:
+          - mountPath: /etc/migrations
+            name: config
+        volumes:
+        - configMap:
+            name: migration-config
+          name: config
+parameters:
+- name: IMAGE_NAME
+  value: quay.io/edge-infrastructure/assisted-events-stream
+- name: IMAGE_TAG
+  required: true
+  value: ""
+- name: IMAGE_PULL_POLICY
+  value: Always
+- name: CPU_LIMIT
+  value: "1"
+- name: CPU_REQUEST
+  value: 10m
+- name: MEMORY_LIMIT
+  value: 512Mi
+- name: MEMORY_REQUEST
+  value: 256Mi
+- name: RESTART_POLICY
+  value: "Never"
+- name: VALKEY_ADDRESS
+  value: valkey:6379
+- name: VALKEY_CREDENTIALS_SECRETNAME
+  value: redis-credentials
+# Processing parameters
+- name: DELETE_NO_TTL_ENABLED
+  value: "true"
+- name: DELETE_NO_TTL_BATCH_SIZE
+  value: "100"
+- name: SPLIT_CLUSTERS_ENABLED
+  value: "true"
+- name: SPLIT_CLUSTERS_BATCH_SIZE
+  value: "100"
+- name: SPLIT_CLUSTERS_EXPIRATION
+  value: "720h" # 30 days

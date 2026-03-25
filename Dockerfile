@@ -9,6 +9,8 @@ RUN cd /app && CGO_ENABLED=0 go build -ldflags='-extldflags=-static' -o=projecti
 
 RUN cd /app && CGO_ENABLED=0 go build -ldflags='-extldflags=-static' -o=onprem ./cmd/onprem/main.go
 
+RUN cd /app && CGO_ENABLED=0 go build -ldflags='-extldflags=-static' -o=migrations ./cmd/migrations/main.go
+
 ## Licenses
 FROM registry.access.redhat.com/ubi9/go-toolset:1.25 AS licenses
 
@@ -40,6 +42,7 @@ COPY --from=licenses /tmp/licenses /licenses
 
 COPY --from=build /app/projection /
 COPY --from=build /app/onprem /
+COPY --from=build /app/migrations /
 
 USER 1001:1001
 

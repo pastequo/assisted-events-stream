@@ -51,7 +51,11 @@ generate-mocks: ## Generate mocks
 	go generate ./...
 
 .PHONY: unit-test
-unit-test: generate-mocks ## Run unit tests
+unit-test: ## Run unit tests
+	go test ./...
+
+.PHONY: unit-test-ginkgo
+unit-test-ginkgo: ## Run unit tests with ginkgo
 	ginkgo -r
 
 .PHONY: lint
@@ -79,3 +83,11 @@ push-host-state:
 
 push-infra-env-state:
 	jq -c '.' resources/infra_env_state.json | $(PRODUCER_COMMAND)
+
+.PHONY: dump-opensearch-data dump-valkey-data
+dump-opensearch-data:
+	@oc exec -it -n assisted-events-streams opensearch-cluster-master-0 -- curl -sk -u admin:admin 'https://localhost:9200/assisted-installer-events-v1-*/_search?pretty&size=5'
+
+VALKEY_QUERY=keys '*'
+dump-valkey-data:
+	@oc exec -it -n assisted-events-streams valkey-0 -- valkey-cli -a HjgL0q1eT7 $(VALKEY_QUERY)

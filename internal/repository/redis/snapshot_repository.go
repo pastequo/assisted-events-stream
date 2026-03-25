@@ -12,7 +12,7 @@ import (
 )
 
 const (
-	ClustersRedisHKey        = "clusters"
+	ClustersRedisKeyPrefix   = "clusters_"
 	HostsRedisHKeyPrefix     = "hosts_"
 	InfraEnvsRedisHKeyPrefix = "infraenvs_"
 )
@@ -44,12 +44,9 @@ func NewSnapshotRepository(logger *logrus.Logger, redis redis.Cmdable, expiratio
 
 func (s *SnapshotRepository) hset(ctx context.Context, key string, field string, event *types.Event) error {
 	var err error
-	eventBytes := []byte("")
-	if event != nil {
-		eventBytes, err = json.Marshal(event.Payload)
-		if err != nil {
-			return fmt.Errorf("failed to marshal payload: %w", err)
-		}
+	eventBytes, err := createPayload(event)
+	if err != nil {
+		return fmt.Errorf("failed to create payload: %w", err)
 	}
 
 	err = s.redis.HSet(ctx, key, field, eventBytes).Err()
@@ -65,8 +62,8 @@ func (s *SnapshotRepository) hset(ctx context.Context, key string, field string,
 	return nil
 }
 
-func getClustersHKey() string {
-	return ClustersRedisHKey
+func getClustersKey(clusterID string) string {
+	return ClustersRedisKeyPrefix + clusterID
 }
 
 func getHostsHKey(clusterID string) string {
@@ -77,8 +74,32 @@ func getInfraEnvsHKey(clusterID string) string {
 	return InfraEnvsRedisHKeyPrefix + clusterID
 }
 
+func createPayload(event *types.Event) ([]byte, error) {
+	ret := []byte("")
+	if event == nil {
+		return ret, nil
+	}
+
+	ret, err := json.Marshal(event.Payload)
+	if err != nil {
+		return nil, fmt.Errorf("failed to marshal payload: %w", err)
+	}
+
+	return ret, nil
+}
+
 func (s *SnapshotRepository) SetCluster(ctx context.Context, clusterID string, event *types.Event) error {
-	return s.hset(ctx, getClustersHKey(), clusterID, event)
+	payload, err := createPayload(event)
+	if err != nil {
+		return fmt.Errorf("failed to create payload: %w", err)
+	}
+
+	err = s.redis.Set(ctx, getClustersKey(clusterID), payload, s.expiration).Err()
+	if err != nil {
+		return fmt.Errorf("failed to set key: %w", err)
+	}
+
+	return nil
 }
 
 func (s *SnapshotRepository) SetHost(ctx context.Context, clusterID, hostID string, event *types.Event) error {
@@ -91,7 +112,7 @@ func (s *SnapshotRepository) SetInfraEnv(ctx context.Context, clusterID, infraEn
 
 func (s *SnapshotRepository) GetCluster(ctx context.Context, clusterID string) (map[string]interface{}, error) {
 	cluster := map[string]interface{}{}
-	clusterRaw, err := s.redis.HGet(ctx, getClustersHKey(), clusterID).Bytes()
+	clusterRaw, err := s.redis.Get(ctx, getClustersKey(clusterID)).Bytes()
 	if err != nil {
 		return cluster, nil
 	}
